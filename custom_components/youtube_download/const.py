@@ -14,10 +14,11 @@ CONF_MAX_HISTORY: Final = "max_history"
 
 # Defaults
 #
-# A YouTube URL pre-selects the first folder whose name contains this, which is
-# the whole point of the setting: meditations arrive far more often than
-# anything else. Images deliberately pre-select nothing.
-DEFAULT_PREFERRED_FOLDER: Final = "meditation"
+# A YouTube URL pre-selects this folder, which is the whole point of the
+# setting: meditations arrive far more often than anything else. Matched as a
+# relative path first, so a nested folder can be named exactly. Images
+# deliberately pre-select nothing.
+DEFAULT_PREFERRED_FOLDER: Final = "meditations/morning"
 DEFAULT_MAX_DOWNLOAD_MB: Final = 500
 DEFAULT_MAX_HISTORY: Final = 20
 

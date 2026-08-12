@@ -181,10 +181,17 @@ def test_human_size():
 
 
 def _tree(root: Path) -> None:
-    """Build a small media tree with the shapes the scanner must handle."""
+    """Build a small media tree with the shapes the scanner must handle.
+
+    Mirrors the real layout: "morning" appears under both art and meditations,
+    so a bare folder name cannot identify one of them.
+    """
     (root / "meditations").mkdir()
     (root / "meditations" / "morning").mkdir()
     (root / "meditations" / "morning" / "short").mkdir()
+    (root / "meditations" / "sleep").mkdir()
+    (root / "art").mkdir()
+    (root / "art" / "morning").mkdir()
     (root / "photos").mkdir()
     (root / ".hidden").mkdir()
     (root / "@eaDir").mkdir()
@@ -193,10 +200,12 @@ def _tree(root: Path) -> None:
 
 def test_scan_is_fully_recursive_and_skips_bookkeeping(tmp_path):
     _tree(tmp_path)
-    folders = media_folders._scan({"media": str(tmp_path)})
+    folders = media_folders._scan({"local": str(tmp_path)})
     labels = [folder["label"] for folder in folders]
 
-    assert labels[0] == "media"  # the source root itself
+    # The source root is hidden: "local" means nothing to the person choosing.
+    assert "local" not in labels
+    assert str(tmp_path) not in [folder["path"] for folder in folders]
     assert "meditations" in labels
     assert os.path.join("meditations", "morning") in labels
     assert os.path.join("meditations", "morning", "short") in labels
@@ -209,27 +218,65 @@ def test_scan_survives_a_symlink_loop(tmp_path):
     _tree(tmp_path)
     (tmp_path / "meditations" / "loop").symlink_to(tmp_path, target_is_directory=True)
 
-    folders = media_folders._scan({"media": str(tmp_path)})
+    folders = media_folders._scan({"local": str(tmp_path)})
 
-    assert len(folders) < 20  # would not terminate without loop protection
+    assert len(folders) < 30  # would not terminate without loop protection
     assert any(folder["label"] == "meditations" for folder in folders)
 
 
 def test_scan_ignores_a_missing_source(tmp_path):
-    assert media_folders._scan({"media": str(tmp_path / "nope")}) == []
+    assert media_folders._scan({"local": str(tmp_path / "nope")}) == []
 
 
-def test_preferred_media_folder_matches_case_insensitively(tmp_path):
+def test_scan_keeps_the_root_when_there_is_nothing_below_it(tmp_path):
+    """Hiding the root of an empty source would leave nowhere to save to."""
+    folders = media_folders._scan({"local": str(tmp_path)})
+
+    assert [folder["label"] for folder in folders] == ["local"]
+
+
+def test_preferred_media_folder_matches_a_nested_path_exactly(tmp_path):
+    """"morning" exists under both art and meditations; the path decides."""
     _tree(tmp_path)
-    folders = media_folders._scan({"media": str(tmp_path)})
+    folders = media_folders._scan({"local": str(tmp_path)})
 
-    picked = media_folders.preferred_media_folder(folders, "MEDITATION")
-    assert picked == str(tmp_path / "meditations")
+    picked = media_folders.preferred_media_folder(folders, "meditations/morning")
+    assert picked == str(tmp_path / "meditations" / "morning")
+
+
+def test_preferred_media_folder_is_case_and_slash_insensitive(tmp_path):
+    _tree(tmp_path)
+    folders = media_folders._scan({"local": str(tmp_path)})
+
+    for setting in ("MEDITATIONS/MORNING", "/meditations/morning/"):
+        assert media_folders.preferred_media_folder(folders, setting) == str(
+            tmp_path / "meditations" / "morning"
+        )
+
+
+def test_preferred_media_folder_falls_back_to_a_bare_name(tmp_path):
+    """An exact folder name still works, and beats a substring match."""
+    _tree(tmp_path)
+    folders = media_folders._scan({"local": str(tmp_path)})
+
+    assert media_folders.preferred_media_folder(folders, "sleep") == str(
+        tmp_path / "meditations" / "sleep"
+    )
+
+
+def test_preferred_media_folder_falls_back_to_a_substring(tmp_path):
+    """The old loose setting keeps working after the folder split."""
+    _tree(tmp_path)
+    folders = media_folders._scan({"local": str(tmp_path)})
+
+    assert media_folders.preferred_media_folder(folders, "meditation") == str(
+        tmp_path / "meditations"
+    )
 
 
 def test_preferred_media_folder_returns_none_without_a_match(tmp_path):
     _tree(tmp_path)
-    folders = media_folders._scan({"media": str(tmp_path)})
+    folders = media_folders._scan({"local": str(tmp_path)})
 
     assert media_folders.preferred_media_folder(folders, "podcasts") is None
     # Blank means "always choose manually", which images rely on.

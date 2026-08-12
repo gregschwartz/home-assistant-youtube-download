@@ -37,19 +37,34 @@ def preferred_media_folder(
 ) -> str | None:
     """Return the folder a YouTube download should pre-select.
 
-    The first folder whose name contains ``preferred`` (case-insensitively)
-    wins. No match means the card starts with nothing selected rather than
-    guessing, because filing audio in the wrong place is worse than one extra
-    click.
+    Matched in order of how specific the match is, so a setting can name a
+    nested folder exactly:
+
+    1. the full relative path (``meditations/morning``)
+    2. the folder's own name (``morning``)
+    3. any folder whose path contains the setting as a substring
+
+    Going by relative path first matters once the same name appears twice -
+    ``art/morning`` and ``meditations/morning`` are different places, and a
+    bare name cannot tell them apart. No match means the card starts with
+    nothing selected rather than guessing, because filing audio in the wrong
+    place is worse than one extra click.
     """
-    needle = (preferred or "").strip().lower()
+    needle = (preferred or "").strip().strip("/").lower()
     if not needle:
         return None
 
-    for folder in folders:
-        if needle in os.path.basename(folder["path"]).lower():
-            return folder["path"]
-    return None
+    def _match(key) -> str | None:
+        for folder in folders:
+            if key(folder):
+                return folder["path"]
+        return None
+
+    return (
+        _match(lambda folder: folder["label"].lower().replace(os.sep, "/") == needle)
+        or _match(lambda folder: os.path.basename(folder["path"]).lower() == needle)
+        or _match(lambda folder: needle in folder["label"].lower().replace(os.sep, "/"))
+    )
 
 
 def resolve_media_folder(hass: HomeAssistant, folder: str) -> str:
@@ -89,7 +104,14 @@ def resolve_media_folder(hass: HomeAssistant, folder: str) -> str:
 
 
 def _scan(sources: dict[str, str]) -> list[dict[str, str]]:
-    """Walk the media sources (blocking; executor only)."""
+    """Walk the media sources (blocking; executor only).
+
+    The source root itself is not offered. Home Assistant names the default
+    source "local", which means nothing to anyone looking at their own media
+    folders, and dropping a download at the top level is rarely what you want.
+    The exception is a source with no subfolders at all, where hiding the root
+    would leave nowhere to save to.
+    """
     folders: list[dict[str, str]] = []
 
     for name, root in sources.items():
@@ -97,8 +119,10 @@ def _scan(sources: dict[str, str]) -> list[dict[str, str]]:
             _LOGGER.debug("Media directory %s does not exist", root)
             continue
 
-        folders.append({"path": root, "label": name, "source": name})
-        folders.extend(_walk(root, root, name, seen={os.path.realpath(root)}))
+        below = _walk(root, root, name, seen={os.path.realpath(root)})
+        if not below:
+            folders.append({"path": root, "label": name, "source": name})
+        folders.extend(below)
 
     return folders
 

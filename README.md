@@ -28,10 +28,10 @@ else on disk is writable from the card.
 │ [ 10 Minute Morning Meditation         ] │
 │                                          │
 │ Destination folder                       │
-│  ○ media                                 │
-│  ● meditations                           │
-│  ○ meditations/morning                   │
-│  ○ photos                                │
+│  ● meditations/morning                   │
+│  ○ art                                   │
+│  ○ art/morning                           │
+│  ○ meditations                           │
 │                                          │
 │ [ Download ]                             │
 └──────────────────────────────────────────┘
@@ -55,9 +55,12 @@ Copy `custom_components/youtube_download/` into your Home Assistant
 
 1. **Settings → Devices & Services → Add Integration → YouTube Download**
 2. Set:
-   - **Folder to pre-select for YouTube links** — matched case-insensitively
-     against folder names. Defaults to `meditation`, so a folder called
-     `meditations` is picked automatically. Leave blank to always choose by hand.
+   - **Folder to pre-select for YouTube links** — defaults to
+     `meditations/morning`. Matched case-insensitively, most specific first:
+     the full relative path (`meditations/morning`), then the folder's own name
+     (`morning`), then any folder containing the text. Use a relative path when
+     the same name appears twice — `art/morning` and `meditations/morning` are
+     different places. Leave blank to always choose by hand.
    - **Maximum download size (MB)** — default 500.
    - **Downloads to keep in the card** — default 20. The list is in-memory only
      and starts empty after a restart.
@@ -86,6 +89,11 @@ max_jobs: 5                    # optional, downloads shown under the button
 Every folder under every directory in your `media_dirs` configuration is
 offered, at any depth. Hidden folders and NAS bookkeeping directories (`.`, `@`
 prefixes) are skipped, and symlink loops are detected rather than followed.
+
+The source root itself is not offered — Home Assistant names the default source
+`local`, which means nothing to anyone looking at their own media folders. The
+exception is a source with no subfolders, where hiding the root would leave
+nowhere to save to.
 
 By default that's `/media`. To add more:
 
