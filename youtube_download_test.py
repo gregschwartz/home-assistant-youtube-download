@@ -36,9 +36,66 @@ def _load(name: str):
     return module
 
 
+def _module(name: str, **attrs) -> types.ModuleType:
+    """Register a stub module under ``name``."""
+    module = types.ModuleType(name)
+    for key, value in attrs.items():
+        setattr(module, key, value)
+    sys.modules[name] = module
+    return module
+
+
+def _stub_dependencies() -> None:
+    """Register just enough of Home Assistant and aiohttp to import the code.
+
+    CI installs pytest and nothing else, so the handful of names these modules
+    touch at import time get stood up here. Anything already installed (a dev
+    machine running Home Assistant) is left alone.
+    """
+    if "homeassistant" not in sys.modules:
+        try:
+            import homeassistant  # noqa: F401
+        except ImportError:
+            import datetime
+
+            _module("homeassistant")
+            _module("homeassistant.config_entries", ConfigEntry=object)
+            _module(
+                "homeassistant.core",
+                HomeAssistant=object,
+                callback=lambda func: func,
+            )
+            _module("homeassistant.helpers")
+            _module(
+                "homeassistant.helpers.aiohttp_client",
+                async_get_clientsession=None,
+            )
+            _module(
+                "homeassistant.util",
+                dt=_module(
+                    "homeassistant.util.dt",
+                    utcnow=lambda: datetime.datetime.now(datetime.timezone.utc),
+                ),
+            )
+
+    try:
+        import aiohttp  # noqa: F401
+    except ImportError:
+        _module(
+            "aiohttp",
+            ClientTimeout=lambda **kwargs: None,
+            ClientError=type("ClientError", (Exception,), {}),
+            ClientResponse=object,
+        )
+
+
+# Stubs must be in place before the first module that imports them is loaded.
+_stub_dependencies()
+
 const = _load("const")
 filenames = _load("filenames")
 media_folders = _load("media_folders")
+manager = _load("manager")
 
 
 # -- filenames ------------------------------------------------------------
@@ -177,6 +234,58 @@ def test_preferred_media_folder_returns_none_without_a_match(tmp_path):
     assert media_folders.preferred_media_folder(folders, "podcasts") is None
     # Blank means "always choose manually", which images rely on.
     assert media_folders.preferred_media_folder(folders, "") is None
+
+
+# -- the job model --------------------------------------------------------
+
+
+def _job(**overrides):
+    """Build a job with the fields the manager always sets."""
+    defaults = {
+        "id": "abc123",
+        "url": "https://youtu.be/xyz",
+        "kind": const.KIND_YOUTUBE,
+        "title": "Morning Meditation",
+        "folder": "/media/meditations",
+    }
+    return manager.DownloadJob(**{**defaults, **overrides})
+
+
+def test_to_dict_survives_the_cancel_event():
+    """dataclasses.asdict() deep-copies, and a lock cannot be deep-copied.
+
+    Regression: to_dict() used asdict() and raised TypeError, which _notify()
+    swallowed - so downloads ran but never appeared in the card.
+    """
+    data = _job().to_dict()
+
+    assert data["id"] == "abc123"
+    assert data["title"] == "Morning Meditation"
+    assert data["state"] == const.STATE_DOWNLOADING
+    assert "cancel_event" not in data
+
+
+def test_to_dict_is_json_serialisable():
+    """The card receives this over the websocket, so it has to survive JSON."""
+    import json
+
+    job = _job(progress=0.5, size=1024, filename="Morning Meditation.mp3")
+    assert json.loads(json.dumps(job.to_dict()))["progress"] == 0.5
+
+
+def test_to_dict_covers_every_field_but_the_event():
+    """A new field must reach the card without anyone remembering to add it."""
+    from dataclasses import fields
+
+    expected = {f.name for f in fields(manager.DownloadJob)} - {"cancel_event"}
+    assert set(_job().to_dict()) == expected
+
+
+def test_is_finished_tracks_state():
+    assert not _job().is_finished
+    assert _job(state=const.STATE_COMPLETED).is_finished
+    assert _job(state=const.STATE_FAILED).is_finished
+    assert _job(state=const.STATE_CANCELLED).is_finished
 
 
 # -- constants ------------------------------------------------------------

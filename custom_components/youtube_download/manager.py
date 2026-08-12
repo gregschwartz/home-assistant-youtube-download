@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Callable
 
 from homeassistant.config_entries import ConfigEntry
@@ -89,10 +89,18 @@ class DownloadJob:
     )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the job as the card sees it."""
-        data = asdict(self)
-        data.pop("cancel_event", None)
-        return data
+        """Return the job as the card sees it.
+
+        Built field by field rather than with ``dataclasses.asdict``, which
+        deep-copies every value: the cancel event holds a lock, and copying a
+        lock raises ``TypeError``. Every remaining field is a primitive, so
+        there is nothing to copy anyway.
+        """
+        return {
+            field_.name: getattr(self, field_.name)
+            for field_ in fields(self)
+            if field_.name != "cancel_event"
+        }
 
     @property
     def is_finished(self) -> bool:

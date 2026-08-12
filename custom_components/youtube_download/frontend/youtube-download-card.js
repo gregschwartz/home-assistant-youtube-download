@@ -8,7 +8,7 @@
  */
 
 const DOMAIN = "youtube_download";
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.0.1";
 
 const PREVIEW_DEBOUNCE_MS = 600;
 
@@ -90,6 +90,11 @@ const STYLES = `
     padding: 7px 12px; cursor: pointer; font-size: 0.95rem;
   }
   .folder:hover { background: var(--secondary-background-color, #f5f5f5); }
+  /* The folder chosen for you, lifted to the top of the list. */
+  .folder.pinned {
+    border-left: 3px solid var(--primary-color);
+    padding-left: 9px;
+  }
   .folder input { flex: 0 0 auto; margin: 0; accent-color: var(--primary-color); }
   .folder-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .folder-source {
@@ -170,6 +175,8 @@ class YouTubeDownloadCard extends HTMLElement {
     this._filename = "";
     this._folder = null;
     this._folders = [];
+    this._ordered = [];
+    this._pinnedFolder = null;
     this._preferredFolder = null;
     this._preview = null;
     this._checking = false;
@@ -270,6 +277,7 @@ class YouTubeDownloadCard extends HTMLElement {
       this._preview = null;
       this._checking = false;
       this._error = "";
+      this._pinnedFolder = null;
       this._previewToken += 1;
       this._render();
       return;
@@ -307,6 +315,7 @@ class YouTubeDownloadCard extends HTMLElement {
       // A video defaults to the preferred folder; an image clears the choice
       // so a destination has to be picked deliberately.
       this._folder = preview.suggested_folder || null;
+      this._pinnedFolder = this._folder;
     }
     this._render();
   }
@@ -330,6 +339,7 @@ class YouTubeDownloadCard extends HTMLElement {
       this._filename = "";
       this._preview = null;
       this._folder = null;
+      this._pinnedFolder = null;
       this._previewToken += 1;
     } catch (err) {
       this._error = err.message || "Could not start the download";
@@ -485,6 +495,23 @@ class YouTubeDownloadCard extends HTMLElement {
     `;
   }
 
+  _orderedFolders() {
+    // The auto-selected folder is lifted to the top so it is visible without
+    // scrolling a long list. Only the automatic pick moves - reordering under
+    // the cursor while you are clicking would be maddening.
+    if (!this._pinnedFolder) return this._folders;
+
+    const pinned = this._folders.filter(
+      (folder) => folder.path === this._pinnedFolder
+    );
+    if (!pinned.length) return this._folders;
+
+    return [
+      ...pinned,
+      ...this._folders.filter((folder) => folder.path !== this._pinnedFolder),
+    ];
+  }
+
   _foldersHtml() {
     if (!this._folders.length) {
       return `<div class="folders-empty">
@@ -492,13 +519,16 @@ class YouTubeDownloadCard extends HTMLElement {
       </div>`;
     }
 
-    const rows = this._folders
+    this._ordered = this._orderedFolders();
+    const showSource =
+      new Set(this._folders.map((item) => item.source)).size > 1;
+
+    const rows = this._ordered
       .map((folder, index) => {
         const checked = this._folder === folder.path ? "checked" : "";
-        const showSource =
-          new Set(this._folders.map((item) => item.source)).size > 1;
+        const pinned = folder.path === this._pinnedFolder ? " pinned" : "";
         return `
-          <label class="folder">
+          <label class="folder${pinned}">
             <input type="radio" name="folder" value="${index}" ${checked}>
             <span class="folder-label">${escapeHtml(folder.label)}</span>
             ${
@@ -589,12 +619,14 @@ class YouTubeDownloadCard extends HTMLElement {
 
     this._card.querySelectorAll('input[name="folder"]').forEach((radio) => {
       radio.addEventListener("change", (event) => {
-        const folder = this._folders[Number(event.target.value)];
+        const folder = this._ordered[Number(event.target.value)];
         this._folder = folder ? folder.path : null;
         const button = this._card.querySelector("#download");
         if (button) button.disabled = !(this._preview && this._folder);
       });
     });
+
+    this._scrollToSelectedFolder();
 
     const download = this._card.querySelector("#download");
     if (download) download.addEventListener("click", () => this._download());
@@ -603,6 +635,22 @@ class YouTubeDownloadCard extends HTMLElement {
     if (clear) clear.addEventListener("click", () => this._clearFinished());
 
     this._wireUpJobs();
+  }
+
+  _scrollToSelectedFolder() {
+    const list = this._card.querySelector(".folders");
+    if (!list) return;
+
+    const checked = list.querySelector('input[name="folder"]:checked');
+    if (!checked) {
+      list.scrollTop = 0;
+      return;
+    }
+
+    // The pinned folder is row one, so this is usually just "back to the top",
+    // but a manual pick further down still gets scrolled into view.
+    const row = checked.closest(".folder");
+    list.scrollTop = row ? Math.max(0, row.offsetTop - list.offsetTop) : 0;
   }
 
   _wireUpJobs() {
