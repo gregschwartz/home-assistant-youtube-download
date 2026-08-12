@@ -1,0 +1,49 @@
+download_url:
+  name: Download URL
+  description: >-
+    Download a YouTube video as MP3, or an image, into one of Home Assistant's
+    media folders.
+  fields:
+    url:
+      name: URL
+      description: A YouTube link, or a direct http(s) URL to an image.
+      required: true
+      example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+      selector:
+        text:
+    folder:
+      name: Folder
+      description: >-
+        Where to save it. Either an absolute path inside a configured media
+        directory, or a path relative to one.
+      required: true
+      example: /media/meditations
+      selector:
+        text:
+    filename:
+      name: Filename
+      description: >-
+        Filename without extension. Defaults to the video title, or the image
+        URL's last path segment. A name already in use gets " (2)" appended
+        rather than overwriting.
+      required: false
+      example: Morning Meditation
+      selector:
+        text:
+
+cancel_job:
+  name: Cancel download
+  description: Stop a download that is still running.
+  fields:
+    job_id:
+      name: Job ID
+      description: The id returned by download_url.
+      required: true
+      selector:
+        text:
+
+list_media_folders:
+  name: List media folders
+  description: >-
+    Return every folder a download can be filed into, plus the one a YouTube
+    URL pre-selects.

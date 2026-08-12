@@ -1,0 +1,13 @@
+{
+  "domain": "youtube_download",
+  "name": "YouTube Download",
+  "codeowners": ["@gregschwartz"],
+  "config_flow": true,
+  "dependencies": ["http", "frontend", "websocket_api"],
+  "documentation": "https://github.com/gregschwartz/home-assistant-youtube-download",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/gregschwartz/home-assistant-youtube-download/issues",
+  "requirements": ["yt-dlp>=2024.12.13"],
+  "version": "1.0.0"
+}

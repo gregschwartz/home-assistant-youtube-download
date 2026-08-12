@@ -1,0 +1,74 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "YouTube Download",
+        "description": "Downloads land in Home Assistant's media directories. YouTube links are saved as MP3; image URLs are saved as-is.",
+        "data": {
+          "preferred_folder": "Folder to pre-select for YouTube links",
+          "max_download_mb": "Maximum download size (MB)",
+          "max_history": "Downloads to keep in the card"
+        },
+        "data_description": {
+          "preferred_folder": "Matched against folder names, case-insensitively. Leave blank to always choose manually.",
+          "max_download_mb": "Anything larger is abandoned part-way.",
+          "max_history": "Older finished downloads drop off the list. Nothing is kept across restarts."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "YouTube Download is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "YouTube Download",
+        "data": {
+          "preferred_folder": "Folder to pre-select for YouTube links",
+          "max_download_mb": "Maximum download size (MB)",
+          "max_history": "Downloads to keep in the card"
+        },
+        "data_description": {
+          "preferred_folder": "Matched against folder names, case-insensitively. Leave blank to always choose manually.",
+          "max_download_mb": "Anything larger is abandoned part-way.",
+          "max_history": "Older finished downloads drop off the list. Nothing is kept across restarts."
+        }
+      }
+    }
+  },
+  "services": {
+    "download_url": {
+      "name": "Download URL",
+      "description": "Download a YouTube video as MP3, or an image, into one of Home Assistant's media folders.",
+      "fields": {
+        "url": {
+          "name": "URL",
+          "description": "A YouTube link, or a direct http(s) URL to an image."
+        },
+        "folder": {
+          "name": "Folder",
+          "description": "Where to save it, inside a configured media directory."
+        },
+        "filename": {
+          "name": "Filename",
+          "description": "Filename without extension. Defaults to the video title or the image URL's last path segment."
+        }
+      }
+    },
+    "cancel_job": {
+      "name": "Cancel download",
+      "description": "Stop a download that is still running.",
+      "fields": {
+        "job_id": {
+          "name": "Job ID",
+          "description": "The id returned by download_url."
+        }
+      }
+    },
+    "list_media_folders": {
+      "name": "List media folders",
+      "description": "Return every folder a download can be filed into, plus the one a YouTube URL pre-selects."
+    }
+  }
+}

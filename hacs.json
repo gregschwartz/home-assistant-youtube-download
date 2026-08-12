@@ -1,0 +1,8 @@
+{
+  "name": "YouTube Download",
+  "content_in_root": false,
+  "homeassistant": "2024.11.0",
+  "render_readme": true,
+  "zip_release": false,
+  "hide_default_branch": false
+}
