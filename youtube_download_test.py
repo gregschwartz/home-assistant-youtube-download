@@ -214,6 +214,27 @@ def test_scan_is_fully_recursive_and_skips_bookkeeping(tmp_path):
     assert "@eaDir" not in labels
 
 
+def test_scan_hides_housekeeping_destinations(tmp_path):
+    (tmp_path / "art").mkdir()
+    (tmp_path / "art" / "_Edit").mkdir()
+    (tmp_path / "art" / "_Errors").mkdir()
+    (tmp_path / "art" / "_Junk").mkdir()
+    (tmp_path / "sounds").mkdir()
+    (tmp_path / "sounds" / "temp").mkdir()
+    (tmp_path / "sounds" / "temp" / "chime_tts").mkdir()
+
+    folders = media_folders._scan({"local": str(tmp_path)})
+    labels = [folder["label"] for folder in folders]
+
+    assert os.path.join("art", "_Edit") not in labels
+    assert os.path.join("art", "_Errors") not in labels
+    assert os.path.join("art", "_Junk") not in labels
+    assert os.path.join("sounds", "temp") not in labels
+    assert os.path.join("sounds", "temp", "chime_tts") not in labels
+    assert "art" in labels
+    assert "sounds" in labels
+
+
 def test_scan_survives_a_symlink_loop(tmp_path):
     _tree(tmp_path)
     (tmp_path / "meditations" / "loop").symlink_to(tmp_path, target_is_directory=True)

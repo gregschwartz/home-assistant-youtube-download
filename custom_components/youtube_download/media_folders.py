@@ -12,6 +12,8 @@ import os
 
 from homeassistant.core import HomeAssistant
 
+from .const import EXCLUDED_MEDIA_FOLDERS
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -143,6 +145,10 @@ def _walk(
         if entry.name.startswith((".", "@")) or not entry.is_dir(follow_symlinks=False):
             continue
 
+        label = os.path.relpath(entry.path, root)
+        if label.lower().replace(os.sep, "/") in EXCLUDED_MEDIA_FOLDERS:
+            continue
+
         # The scan is unbounded in depth, so a symlink loop would hang it.
         real = os.path.realpath(entry.path)
         if real in seen:
@@ -152,7 +158,7 @@ def _walk(
         found.append(
             {
                 "path": entry.path,
-                "label": os.path.relpath(entry.path, root),
+                "label": label,
                 "source": source,
             }
         )

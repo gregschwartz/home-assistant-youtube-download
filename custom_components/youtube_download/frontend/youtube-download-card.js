@@ -8,7 +8,7 @@
  */
 
 const DOMAIN = "youtube_download";
-const CARD_VERSION = "1.0.1";
+const CARD_VERSION = "1.0.2";
 
 const PREVIEW_DEBOUNCE_MS = 600;
 
@@ -40,6 +40,7 @@ const STYLES = `
     display: block; font-size: 0.8rem; font-weight: 500;
     color: var(--secondary-text-color); margin-bottom: 4px;
   }
+  .field-row { display: flex; gap: 8px; align-items: stretch; }
   input[type="text"] {
     width: 100%; box-sizing: border-box;
     padding: 10px 12px;
@@ -50,6 +51,11 @@ const STYLES = `
     font-size: 1rem; font-family: inherit;
   }
   input[type="text"]:focus { outline: none; border-color: var(--primary-color); }
+  button.paste {
+    flex: 0 0 auto; padding: 0 12px;
+    background: transparent; color: var(--primary-color);
+    border: 1px solid var(--divider-color, #e0e0e0);
+  }
 
   .preview {
     display: flex; gap: 12px; align-items: flex-start;
@@ -404,9 +410,18 @@ class YouTubeDownloadCard extends HTMLElement {
 
       <label class="field">
         <span>YouTube or image URL</span>
-        <input id="url" type="text" spellcheck="false"
-               placeholder="https://www.youtube.com/watch?v=..."
-               value="${escapeHtml(this._url)}">
+        <div class="field-row">
+          <input id="url" type="text" spellcheck="false"
+                 placeholder="https://www.youtube.com/watch?v=..."
+                 value="${escapeHtml(this._url)}">
+          ${
+            navigator.clipboard && navigator.clipboard.readText
+              ? `<button id="paste" class="paste" type="button" title="Paste">
+                   <ha-icon icon="mdi:content-paste"></ha-icon>
+                 </button>`
+              : ""
+          }
+        </div>
       </label>
 
       ${this._previewHtml()}
@@ -604,6 +619,23 @@ class YouTubeDownloadCard extends HTMLElement {
         if (event.key === "Enter") {
           clearTimeout(this._previewTimer);
           this._fetchPreview();
+        }
+      });
+    }
+
+    const paste = this._card.querySelector("#paste");
+    if (paste) {
+      paste.addEventListener("click", async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            this._url = text.trim();
+            this._queuePreview();
+            this._render();
+          }
+        } catch (err) {
+          this._error = "Could not read the clipboard";
+          this._render();
         }
       });
     }

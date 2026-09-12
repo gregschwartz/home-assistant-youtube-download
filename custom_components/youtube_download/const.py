@@ -22,6 +22,18 @@ DEFAULT_PREFERRED_FOLDER: Final = "meditations/morning"
 DEFAULT_MAX_DOWNLOAD_MB: Final = 500
 DEFAULT_MAX_HISTORY: Final = 20
 
+# Destinations that exist for other tools' housekeeping, not for filing a
+# download. Matched against the folder's relative path (case-insensitive);
+# excluding a folder also excludes everything below it.
+EXCLUDED_MEDIA_FOLDERS: Final = frozenset(
+    {
+        "art/_edit",
+        "art/_errors",
+        "art/_junk",
+        "sounds/temp",
+    }
+)
+
 # Job states
 STATE_DOWNLOADING: Final = "downloading"
 STATE_COMPLETED: Final = "completed"
