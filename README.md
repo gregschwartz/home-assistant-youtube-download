@@ -3,6 +3,14 @@
 Paste a YouTube link or an image URL into a Lovelace card, check the preview is
 the right thing, pick a folder, hit Download.
 
+I built this for two things: pulling down YouTube meditations as MP3s onto my
+meditation-app media source, and saving art from around the web onto the
+folder my art TV displays as a slideshow. The two paths in the card map
+directly to that — YouTube links become audio, image URLs get saved as-is —
+but there's nothing meditation- or art-specific baked in beyond the default
+folder name, so it works just as well for podcasts, sound effects, wallpapers,
+or whatever else you're filing into Home Assistant's media directories.
+
 - **YouTube links** are saved as MP3 (yt-dlp grabs the best audio stream, ffmpeg
   converts it), and pre-select your meditations folder.
 - **Image URLs** are saved as-is, and pre-select nothing — you choose where each
@@ -10,32 +18,6 @@ the right thing, pick a folder, hit Download.
 
 Everything lands inside Home Assistant's configured media directories. Nothing
 else on disk is writable from the card.
-
-## The card
-
-```
-┌──────────────────────────────────────────┐
-│ ⬇  Download to media                     │
-│                                          │
-│ YouTube or image URL                     │
-│ [ https://youtube.com/watch?v=…        ] │
-│                                          │
-│ ┌──────────┐ YOUTUBE → MP3               │
-│ │ thumbnail│ 10 Minute Morning Meditation│
-│ └──────────┘ 10:32 · Great Meditation    │
-│                                          │
-│ Filename (.mp3 is added)                 │
-│ [ 10 Minute Morning Meditation         ] │
-│                                          │
-│ Destination folder                       │
-│  ● meditations/morning                   │
-│  ○ art                                   │
-│  ○ art/morning                           │
-│  ○ meditations                           │
-│                                          │
-│ [ Download ]                             │
-└──────────────────────────────────────────┘
-```
 
 ## Installation
 
