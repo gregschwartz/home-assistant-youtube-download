@@ -119,6 +119,19 @@ data:
 
 Stops a running download. Takes `job_id`, returns `{"cancelled": true|false}`.
 
+### `youtube_download.preview_url`
+
+Returns a URL's details without downloading: `title`, `subtitle`, `thumbnail`,
+`suggested_filename`, etc. Takes a YouTube link, a bare video or playlist ID,
+or an image URL. A link with `list=` describes the playlist.
+
+```yaml
+action: youtube_download.preview_url
+data:
+  url: dQw4w9WgXcQ
+response_variable: preview   # preview.title
+```
+
 ### `youtube_download.list_media_folders`
 
 Returns every folder a download can go into, plus the one a YouTube URL

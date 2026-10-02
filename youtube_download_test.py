@@ -96,6 +96,7 @@ const = _load("const")
 filenames = _load("filenames")
 media_folders = _load("media_folders")
 manager = _load("manager")
+youtube = _load("youtube")
 
 
 # -- filenames ------------------------------------------------------------
@@ -366,3 +367,32 @@ def test_image_suffixes_cover_the_content_types():
 
 def test_youtube_hosts_are_lowercase():
     assert all(host == host.lower() for host in const.YOUTUBE_HOSTS)
+
+
+# -- youtube refs ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ref", "expected"),
+    [
+        ("u7deClndzQw", "https://www.youtube.com/watch?v=u7deClndzQw"),
+        ("PL7Yvr29YiYrDv-9kxFsIoEavmPb8b8nif", "https://www.youtube.com/playlist?list=PL7Yvr29YiYrDv-9kxFsIoEavmPb8b8nif"),
+        ("  https://youtu.be/u7deClndzQw  ", "https://youtu.be/u7deClndzQw"),
+        ("https://example.com/a.jpg", "https://example.com/a.jpg"),
+    ],
+)
+def test_normalize_youtube_ref(ref, expected):
+    assert youtube.normalize_youtube_ref(ref) == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://www.youtube.com/watch?v=u7deClndzQw&list=PLabc", "PLabc"),
+        ("https://www.youtube.com/playlist?list=PLabc", "PLabc"),
+        ("https://www.youtube.com/watch?v=u7deClndzQw", None),
+        ("https://example.com/?list=PLabc", None),
+    ],
+)
+def test_playlist_id(url, expected):
+    assert youtube.playlist_id(url) == expected

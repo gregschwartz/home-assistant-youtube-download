@@ -21,6 +21,7 @@ from .const import (
     SERVICE_CANCEL_JOB,
     SERVICE_DOWNLOAD_URL,
     SERVICE_LIST_MEDIA_FOLDERS,
+    SERVICE_PREVIEW_URL,
 )
 from .manager import DownloadError, DownloadManager
 from .media_folders import async_list_media_folders, preferred_media_folder
@@ -42,6 +43,8 @@ DOWNLOAD_URL_SCHEMA = vol.Schema(
 )
 
 CANCEL_JOB_SCHEMA = vol.Schema({vol.Required("job_id"): cv.string})
+
+PREVIEW_URL_SCHEMA = vol.Schema({vol.Required("url"): cv.string})
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -159,6 +162,20 @@ def _async_register_services(hass: HomeAssistant) -> None:
             ),
         }
 
+    async def _preview_url(call: ServiceCall) -> dict[str, Any]:
+        """Describe a URL (title etc.) without downloading it."""
+        try:
+            return await _get_manager(hass).async_preview(call.data["url"])
+        except DownloadError as err:
+            raise ServiceValidationError(str(err)) from err
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PREVIEW_URL,
+        _preview_url,
+        schema=PREVIEW_URL_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
     hass.services.async_register(
         DOMAIN,
         SERVICE_DOWNLOAD_URL,

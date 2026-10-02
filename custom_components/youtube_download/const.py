@@ -50,6 +50,7 @@ KIND_IMAGE: Final = "image"
 SERVICE_DOWNLOAD_URL: Final = "download_url"
 SERVICE_CANCEL_JOB: Final = "cancel_job"
 SERVICE_LIST_MEDIA_FOLDERS: Final = "list_media_folders"
+SERVICE_PREVIEW_URL: Final = "preview_url"
 
 # Events
 EVENT_DOWNLOAD_COMPLETED: Final = f"{DOMAIN}_download_completed"

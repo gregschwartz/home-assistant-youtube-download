@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from dataclasses import dataclass
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from homeassistant.core import HomeAssistant
 
@@ -58,6 +59,23 @@ def is_youtube_url(url: str) -> bool:
     except ValueError:
         return False
     return host in YOUTUBE_HOSTS
+
+
+def normalize_youtube_ref(ref: str) -> str:
+    """Turn a bare video ID (always 11 chars) or playlist ID into a full URL."""
+    ref = (ref or "").strip()
+    if not re.fullmatch(r"[\w-]+", ref):
+        return ref
+    if len(ref) == 11:
+        return f"https://www.youtube.com/watch?v={ref}"
+    return f"https://www.youtube.com/playlist?list={ref}"
+
+
+def playlist_id(url: str) -> str | None:
+    """Return the ``list=`` playlist ID of a YouTube URL, if it has one."""
+    if not is_youtube_url(url):
+        return None
+    return (parse_qs(urlparse(url).query).get("list") or [None])[0]
 
 
 async def async_preview_youtube(hass: HomeAssistant, url: str) -> YouTubePreview:
@@ -121,6 +139,9 @@ def _single_entry(info: dict[str, Any], url: str) -> dict[str, Any]:
 def _preview(url: str) -> YouTubePreview:
     """Pull metadata only (blocking; executor only)."""
     yt_dlp = _ydl()
+    playlist = playlist_id(url)
+    if playlist:
+        return _preview_playlist(yt_dlp, playlist)
 
     options = {
         "noplaylist": True,
@@ -146,6 +167,31 @@ def _preview(url: str) -> YouTubePreview:
         duration=float(duration) if duration else None,
         thumbnail=_best_thumbnail(info),
         url=info.get("webpage_url") or url,
+    )
+
+
+def _preview_playlist(yt_dlp: Any, playlist: str) -> YouTubePreview:
+    """Describe a playlist without resolving every video in it."""
+    url = f"https://www.youtube.com/playlist?list={playlist}"
+    options = {
+        "extract_flat": True,
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "logger": _LOGGER,
+    }
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception as err:  # noqa: BLE001 - yt-dlp raises a wide variety
+        raise YouTubeError(f"Could not read {url}: {err}") from err
+
+    return YouTubePreview(
+        title=info.get("title") or "Untitled playlist",
+        uploader=info.get("uploader") or info.get("channel"),
+        duration=None,
+        thumbnail=_best_thumbnail(info),
+        url=url,
     )
 
 

@@ -47,3 +47,17 @@ list_media_folders:
   description: >-
     Return every folder a download can be filed into, plus the one a YouTube
     URL pre-selects.
+
+preview_url:
+  name: Preview URL
+  description: >-
+    Return a YouTube video's or playlist's title, uploader and thumbnail (or an
+    image URL's details) without downloading. Accepts bare video/playlist IDs.
+  fields:
+    url:
+      name: URL
+      description: A YouTube link, video ID, playlist ID, or image URL.
+      required: true
+      example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+      selector:
+        text:

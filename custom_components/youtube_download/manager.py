@@ -52,6 +52,7 @@ from .youtube import (
     async_download_youtube,
     async_preview_youtube,
     is_youtube_url,
+    normalize_youtube_ref,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -193,7 +194,7 @@ class DownloadManager:
         Also returns the folder to pre-select: the preferred one for a video,
         and deliberately nothing for an image so a destination must be chosen.
         """
-        url = (url or "").strip()
+        url = normalize_youtube_ref(url)
         kind = self.classify(url)
         folders = await async_list_media_folders(self.hass)
 
