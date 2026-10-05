@@ -706,3 +706,16 @@ def test_version_is_not_read_on_the_event_loop(monkeypatch):
     hass = _FakeHass()
     mgr = manager.DownloadManager(hass, types.SimpleNamespace(entry_id="e1", data={}, options={}))
     assert mgr.ytdlp_version is None
+
+
+def test_first_upgrade_notifies_even_when_pip_changed_nothing(monkeypatch):
+    # Sensor starts at None; a (x, x) result from pip must still re-render it.
+    hass = _FakeHass()
+    mgr = manager.DownloadManager(hass, types.SimpleNamespace(entry_id="e1", data={}, options={}))
+    notified: list[object] = []
+    mgr.async_add_listener(notified.append)
+    monkeypatch.setattr(manager, "upgrade", lambda d=None: ("2026.8.19", "2026.8.19"))
+
+    assert asyncio.run(mgr.async_upgrade_ytdlp()) == ("2026.8.19", "2026.8.19")
+    assert mgr.ytdlp_version == "2026.8.19"
+    assert notified == [None]

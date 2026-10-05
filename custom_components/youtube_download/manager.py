@@ -276,8 +276,11 @@ class DownloadManager:
             old, new = await self.hass.async_add_executor_job(
                 upgrade, self.hass.config.config_dir
             )
+            # Compare against what entities currently show, not upgrade()'s
+            # old/new: on first run the sensor holds None even if pip changed nothing.
+            shown = self.ytdlp_version
             self.ytdlp_version = new
-        if new != old:
+        if new != shown:
             self._notify(None)
         return old, new
 
