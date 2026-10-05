@@ -76,7 +76,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     async def _async_daily_upgrade(_now: datetime) -> None:
-        await manager.async_upgrade_ytdlp()
+        # Unattended: never yank yt-dlp out from under a running download.
+        await manager.async_upgrade_ytdlp(skip_if_busy=True)
 
     entry.async_on_unload(
         async_track_time_interval(hass, _async_daily_upgrade, YTDLP_UPDATE_INTERVAL)

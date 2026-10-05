@@ -642,3 +642,67 @@ def test_download_waits_for_an_upgrade_in_progress(monkeypatch):
 
     asyncio.run(run())
     assert order == ["upgrade start", "upgrade done", "download"]
+
+
+def _blocking_download(order: list[str], release: asyncio.Event):
+    async def fake_download(hass, url, destination, **kwargs):
+        order.append("download start")
+        await release.wait()
+        order.append("download done")
+        return youtube.YouTubeResult(
+            path="/media/x.mp3", title="x", duration=1.0, bytes_downloaded=1, final_url=url,
+        )
+    return fake_download
+
+
+def test_service_upgrade_waits_for_running_download(monkeypatch):
+    hass = _FakeHass()
+    mgr = manager.DownloadManager(hass, types.SimpleNamespace(entry_id="e1", data={}, options={}))
+    job = _make_job(mgr)
+    order: list[str] = []
+    release = asyncio.Event()
+    monkeypatch.setattr(manager, "async_download_youtube", _blocking_download(order, release))
+    monkeypatch.setattr(manager, "upgrade", lambda d=None: order.append("upgrade") or ("1", "2"))
+
+    async def run():
+        download = asyncio.ensure_future(mgr._async_run(job, "t", "/media"))
+        await asyncio.sleep(0)
+        upgrade = asyncio.ensure_future(mgr.async_upgrade_ytdlp())
+        await asyncio.sleep(0)
+        assert order == ["download start"]
+        release.set()
+        return await asyncio.gather(download, upgrade)
+
+    _, result = asyncio.run(run())
+    assert order == ["download start", "download done", "upgrade"]
+    assert result == ("1", "2") and mgr.ytdlp_version == "2"
+
+
+def test_daily_upgrade_skips_while_a_download_runs(monkeypatch):
+    hass = _FakeHass()
+    mgr = manager.DownloadManager(hass, types.SimpleNamespace(entry_id="e1", data={}, options={}))
+    mgr.ytdlp_version = "1"
+    job = _make_job(mgr)
+    order: list[str] = []
+    release = asyncio.Event()
+    monkeypatch.setattr(manager, "async_download_youtube", _blocking_download(order, release))
+    monkeypatch.setattr(manager, "upgrade", lambda d=None: order.append("upgrade") or ("1", "2"))
+
+    async def run():
+        download = asyncio.ensure_future(mgr._async_run(job, "t", "/media"))
+        await asyncio.sleep(0)
+        skipped = await mgr.async_upgrade_ytdlp(skip_if_busy=True)
+        release.set()
+        await download
+        return skipped
+
+    assert asyncio.run(run()) == ("1", "1")
+    assert order == ["download start", "download done"]
+    assert mgr.ytdlp_version == "1"
+
+
+def test_version_is_not_read_on_the_event_loop(monkeypatch):
+    monkeypatch.setattr(updater, "installed_version", lambda: pytest.fail("read on loop"))
+    hass = _FakeHass()
+    mgr = manager.DownloadManager(hass, types.SimpleNamespace(entry_id="e1", data={}, options={}))
+    assert mgr.ytdlp_version is None

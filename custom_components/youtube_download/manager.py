@@ -47,7 +47,7 @@ from .media_folders import (
     preferred_media_folder,
     resolve_media_folder,
 )
-from .updater import installed_version, is_stale_error, upgrade
+from .updater import is_stale_error, upgrade
 from .youtube import (
     YouTubeError,
     async_download_youtube,
@@ -120,11 +120,17 @@ class DownloadManager:
         self._jobs: dict[str, DownloadJob] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._listeners: list[Callable[[DownloadJob | None], None]] = []
-        self.ytdlp_version: str | None = installed_version()
+        # Filled in by the first upgrade (runs on the executor; reading the
+        # version is file I/O that does not belong on the event loop).
+        self.ytdlp_version: str | None = None
         # Serialises upgrades with each other and with download starts, so two
         # uv processes never race on one install and no download imports a
-        # half-written yt-dlp.
+        # half-written yt-dlp. _idle is set while no YouTube download is
+        # running, so an upgrade never swaps modules under one.
         self._ytdlp_lock = asyncio.Lock()
+        self._inflight = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
 
     # -- configuration -----------------------------------------------------
 
@@ -253,9 +259,20 @@ class DownloadManager:
 
     # -- yt-dlp ------------------------------------------------------------
 
-    async def async_upgrade_ytdlp(self) -> tuple[str | None, str | None]:
-        """Upgrade yt-dlp off the event loop; returns (previous, current)."""
+    async def async_upgrade_ytdlp(
+        self, *, skip_if_busy: bool = False
+    ) -> tuple[str | None, str | None]:
+        """Upgrade yt-dlp off the event loop; returns (previous, current).
+
+        Waits for in-flight YouTube downloads first (new ones queue on the
+        lock). With ``skip_if_busy`` it gives up instead of waiting, which is
+        what the unattended daily run wants.
+        """
         async with self._ytdlp_lock:
+            if skip_if_busy and self._inflight:
+                _LOGGER.debug("Skipping yt-dlp upgrade: %d download(s) running", self._inflight)
+                return self.ytdlp_version, self.ytdlp_version
+            await self._idle.wait()
             old, new = await self.hass.async_add_executor_job(
                 upgrade, self.hass.config.config_dir
             )
@@ -386,13 +403,25 @@ class DownloadManager:
         self, job: DownloadJob, stem: str, destination: str
     ) -> tuple[str, int]:
         """Download the job's URL once; returns (path, size)."""
-        if job.kind == KIND_YOUTUBE:
-            async with self._ytdlp_lock:  # wait out an in-flight upgrade
-                pass
-            download = async_download_youtube
-        else:
-            download = async_download_image
-        result = await download(
+        if job.kind != KIND_YOUTUBE:
+            result = await self._async_download(async_download_image, job, stem, destination)
+            return result.path, result.bytes_downloaded
+
+        async with self._ytdlp_lock:  # wait out an in-flight upgrade
+            self._inflight += 1
+            self._idle.clear()
+        try:
+            result = await self._async_download(async_download_youtube, job, stem, destination)
+        finally:
+            self._inflight -= 1
+            if not self._inflight:
+                self._idle.set()
+        return result.path, result.bytes_downloaded
+
+    async def _async_download(
+        self, download: Callable[..., Any], job: DownloadJob, stem: str, destination: str
+    ) -> Any:
+        return await download(
             self.hass,
             job.url,
             destination,
@@ -401,7 +430,6 @@ class DownloadManager:
             progress_callback=self._make_progress_callback(job),
             cancel_event=job.cancel_event,
         )
-        return result.path, result.bytes_downloaded
 
     async def _async_run(self, job: DownloadJob, stem: str, destination: str) -> None:
         """Run the download and record how it went."""
