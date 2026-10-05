@@ -47,6 +47,7 @@ from .media_folders import (
     preferred_media_folder,
     resolve_media_folder,
 )
+from .updater import installed_version, is_stale_error, upgrade
 from .youtube import (
     YouTubeError,
     async_download_youtube,
@@ -119,6 +120,7 @@ class DownloadManager:
         self._jobs: dict[str, DownloadJob] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._listeners: list[Callable[[DownloadJob | None], None]] = []
+        self.ytdlp_version: str | None = installed_version()
 
     # -- configuration -----------------------------------------------------
 
@@ -245,6 +247,18 @@ class DownloadManager:
             "suggested_folder": None,
         }
 
+    # -- yt-dlp ------------------------------------------------------------
+
+    async def async_upgrade_ytdlp(self) -> tuple[str | None, str | None]:
+        """Upgrade yt-dlp off the event loop; returns (previous, current)."""
+        old, new = await self.hass.async_add_executor_job(
+            upgrade, self.hass.config.config_dir
+        )
+        self.ytdlp_version = new
+        if new != old:
+            self._notify(None)
+        return old, new
+
     # -- downloads ---------------------------------------------------------
 
     async def async_start_download(
@@ -363,33 +377,40 @@ class DownloadManager:
 
         return _report
 
+    async def _async_fetch(
+        self, job: DownloadJob, stem: str, destination: str
+    ) -> tuple[str, int]:
+        """Download the job's URL once; returns (path, size)."""
+        download = (
+            async_download_youtube if job.kind == KIND_YOUTUBE else async_download_image
+        )
+        result = await download(
+            self.hass,
+            job.url,
+            destination,
+            stem=stem,
+            max_bytes=self.max_bytes,
+            progress_callback=self._make_progress_callback(job),
+            cancel_event=job.cancel_event,
+        )
+        return result.path, result.bytes_downloaded
+
     async def _async_run(self, job: DownloadJob, stem: str, destination: str) -> None:
         """Run the download and record how it went."""
-        progress = self._make_progress_callback(job)
-
         try:
-            if job.kind == KIND_YOUTUBE:
-                result = await async_download_youtube(
-                    self.hass,
-                    job.url,
-                    destination,
-                    stem=stem,
-                    max_bytes=self.max_bytes,
-                    progress_callback=progress,
-                    cancel_event=job.cancel_event,
-                )
-                path, size = result.path, result.bytes_downloaded
-            else:
-                result = await async_download_image(
-                    self.hass,
-                    job.url,
-                    destination,
-                    stem=stem,
-                    max_bytes=self.max_bytes,
-                    progress_callback=progress,
-                    cancel_event=job.cancel_event,
-                )
-                path, size = result.path, result.bytes_downloaded
+            try:
+                path, size = await self._async_fetch(job, stem, destination)
+            except YouTubeError as err:
+                # A 403 / "sign in" usually means YouTube changed under a
+                # stale yt-dlp; a fresh one fixes it more often than not.
+                if job.cancel_event.is_set() or not is_stale_error(str(err)):
+                    raise
+                old, new = await self.async_upgrade_ytdlp()
+                if new == old:
+                    raise
+                job.message = f"Retrying with yt-dlp {new}"
+                self._notify(job)
+                path, size = await self._async_fetch(job, stem, destination)
         except asyncio.CancelledError:
             self._finish(job, STATE_CANCELLED, "Cancelled")
             raise

@@ -79,6 +79,10 @@
           "description": "A YouTube link, video ID, playlist ID, or image URL."
         }
       }
+    },
+    "update_ytdlp": {
+      "name": "Update yt-dlp",
+      "description": "Upgrade yt-dlp to the latest release now. This also happens on startup, daily, and after a download fails in a way an upgrade tends to fix."
     }
   }
 }

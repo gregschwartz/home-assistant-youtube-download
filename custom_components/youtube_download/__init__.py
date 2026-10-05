@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timedelta
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
@@ -22,6 +25,7 @@ from .const import (
     SERVICE_DOWNLOAD_URL,
     SERVICE_LIST_MEDIA_FOLDERS,
     SERVICE_PREVIEW_URL,
+    SERVICE_UPDATE_YTDLP,
 )
 from .manager import DownloadError, DownloadManager
 from .media_folders import async_list_media_folders, preferred_media_folder
@@ -33,6 +37,11 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # hass.data[DOMAIN] maps entry_id -> DownloadManager and nothing else.
 FRONTEND_FLAG = f"{DOMAIN}_frontend_registered"
+
+PLATFORMS = [Platform.SENSOR]
+
+# yt-dlp releases roughly weekly; daily is plenty to stay ahead of YouTube.
+YTDLP_UPDATE_INTERVAL = timedelta(hours=24)
 
 DOWNLOAD_URL_SCHEMA = vol.Schema(
     {
@@ -58,9 +67,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     manager = DownloadManager(hass, entry)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
 
+    # Upgrade before anything imports yt-dlp, so a stale copy is never loaded.
+    await manager.async_upgrade_ytdlp()
+
+    async def _async_daily_upgrade(_now: datetime) -> None:
+        await manager.async_upgrade_ytdlp()
+
+    entry.async_on_unload(
+        async_track_time_interval(hass, _async_daily_upgrade, YTDLP_UPDATE_INTERVAL)
+    )
+
     await _async_register_frontend(hass)
     async_register_websocket_api(hass)
     _async_register_services(hass)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     return True
@@ -68,6 +88,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Tear a config entry down."""
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     manager: DownloadManager | None = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if manager is not None:
         await manager.async_shutdown()
@@ -77,10 +98,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             SERVICE_DOWNLOAD_URL,
             SERVICE_CANCEL_JOB,
             SERVICE_LIST_MEDIA_FOLDERS,
+            SERVICE_PREVIEW_URL,
+            SERVICE_UPDATE_YTDLP,
         ):
             hass.services.async_remove(DOMAIN, service)
 
-    return True
+    return unloaded
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -169,6 +192,17 @@ def _async_register_services(hass: HomeAssistant) -> None:
         except DownloadError as err:
             raise ServiceValidationError(str(err)) from err
 
+    async def _update_ytdlp(call: ServiceCall) -> dict[str, Any]:
+        """Upgrade yt-dlp now."""
+        previous, current = await _get_manager(hass).async_upgrade_ytdlp()
+        return {"previous": previous, "current": current}
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UPDATE_YTDLP,
+        _update_ytdlp,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     hass.services.async_register(
         DOMAIN,
         SERVICE_PREVIEW_URL,

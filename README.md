@@ -137,6 +137,17 @@ response_variable: preview   # preview.title
 Returns every folder a download can go into, plus the one a YouTube URL
 pre-selects.
 
+### `youtube_download.update_ytdlp`
+
+Upgrades yt-dlp now. Returns `{"previous": "...", "current": "..."}`.
+
+## Keeping yt-dlp current
+
+yt-dlp keeps itself current: it is upgraded on startup, daily, after a failed
+download (a 403 or "sign in to confirm" error triggers an upgrade and one
+retry), and on demand via the `update_ytdlp` service. The running version is
+shown by `sensor.youtube_download_yt_dlp_version`.
+
 ## Events
 
 | Event | Fired when |
@@ -160,7 +171,7 @@ actions:
 ## Requirements
 
 - Home Assistant 2024.11 or newer
-- `yt-dlp` (installed automatically)
+- `yt-dlp` (installed automatically and kept up to date)
 - ffmpeg, which Home Assistant ships with — needed to convert YouTube audio to
   MP3
 

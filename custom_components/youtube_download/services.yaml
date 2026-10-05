@@ -61,3 +61,9 @@ preview_url:
       example: https://www.youtube.com/watch?v=dQw4w9WgXcQ
       selector:
         text:
+
+update_ytdlp:
+  name: Update yt-dlp
+  description: >-
+    Upgrade yt-dlp to the latest release now. This also happens on startup,
+    daily, and after a download fails in a way an upgrade tends to fix.

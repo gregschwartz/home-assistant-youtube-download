@@ -6,6 +6,8 @@ pytest with nothing installed.
 """
 from __future__ import annotations
 
+import asyncio
+import importlib.metadata
 import importlib.util
 import os
 import sys
@@ -66,6 +68,8 @@ def _stub_dependencies() -> None:
                 callback=lambda func: func,
             )
             _module("homeassistant.helpers")
+            _module("homeassistant.requirements", pip_kwargs=lambda config_dir: {})
+            _module("homeassistant.util.package", install_package=lambda *a, **k: True)
             _module(
                 "homeassistant.helpers.aiohttp_client",
                 async_get_clientsession=None,
@@ -97,6 +101,7 @@ filenames = _load("filenames")
 media_folders = _load("media_folders")
 manager = _load("manager")
 youtube = _load("youtube")
+updater = _load("updater")
 
 
 # -- filenames ------------------------------------------------------------
@@ -396,3 +401,163 @@ def test_normalize_youtube_ref(ref, expected):
 )
 def test_playlist_id(url, expected):
     assert youtube.playlist_id(url) == expected
+
+
+# -- the yt-dlp updater ---------------------------------------------------
+
+
+def _fake_install(monkeypatch, versions: list[str | None], result: bool = True):
+    """Make install_package "upgrade" by advancing through ``versions``."""
+    calls: list[tuple] = []
+
+    def version(name: str) -> str:
+        if versions[0] is None:
+            raise importlib.metadata.PackageNotFoundError(name)
+        return versions[0]
+
+    def install(package: str, **kwargs) -> bool:
+        calls.append((package, kwargs))
+        if result and len(versions) > 1:
+            versions.pop(0)
+        return result
+
+    monkeypatch.setattr(updater.importlib.metadata, "version", version)
+    monkeypatch.setattr(updater, "install_package", install)
+    monkeypatch.setattr(updater, "pip_kwargs", lambda config_dir: {})
+    return calls
+
+
+def test_installed_version_is_none_when_missing(monkeypatch):
+    _fake_install(monkeypatch, [None])
+    assert updater.installed_version() is None
+
+
+def test_upgrade_reports_versions_and_drops_loaded_modules(monkeypatch):
+    calls = _fake_install(monkeypatch, ["2026.1.1", "2026.9.9"])
+    for name in ("yt_dlp", "yt_dlp.utils", "yt_dlp.extractor.youtube"):
+        sys.modules[name] = types.ModuleType(name)
+    sys.modules["yt_dlp_plugins"] = types.ModuleType("yt_dlp_plugins")
+
+    assert updater.upgrade("/config") == ("2026.1.1", "2026.9.9")
+
+    assert calls == [("yt-dlp", {"upgrade": True})]
+    assert not any(n == "yt_dlp" or n.startswith("yt_dlp.") for n in sys.modules)
+    # Only yt-dlp itself is reloaded; look-alike names are not our business.
+    assert "yt_dlp_plugins" in sys.modules
+    del sys.modules["yt_dlp_plugins"]
+
+
+def test_upgrade_installs_where_home_assistant_does(monkeypatch):
+    calls = _fake_install(monkeypatch, ["1"])
+    monkeypatch.setattr(updater, "pip_kwargs", lambda d: {"target": f"{d}/deps"})
+    updater.upgrade("/config")
+    assert calls[0][1] == {"upgrade": True, "target": "/config/deps"}
+
+
+def test_upgrade_never_raises(monkeypatch):
+    _fake_install(monkeypatch, ["2026.1.1", "2026.9.9"], result=False)
+    assert updater.upgrade() == ("2026.1.1", "2026.1.1")
+
+    def boom(package: str, **kwargs) -> bool:
+        raise OSError("no network")
+
+    monkeypatch.setattr(updater, "install_package", boom)
+    assert updater.upgrade() == ("2026.1.1", "2026.1.1")
+
+
+@pytest.mark.parametrize(
+    ("message", "stale"),
+    [
+        ("HTTP Error 403: Forbidden", True),
+        ("Sign in to confirm you're not a bot", True),
+        ("unable to download video data: timed out", True),
+        ("Download exceeded the 500 MB limit", False),
+        ("Cancelled", False),
+    ],
+)
+def test_is_stale_error(message, stale):
+    assert updater.is_stale_error(message) is stale
+
+
+# -- retry after a yt-dlp upgrade -----------------------------------------
+
+
+class _FakeHass:
+    """Just enough of HomeAssistant for DownloadManager._async_run."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.bus = types.SimpleNamespace(
+            async_fire=lambda event, data: self.events.append(event)
+        )
+        self.config = types.SimpleNamespace(config_dir="/config")
+
+    async def async_add_executor_job(self, func, *args):
+        return func(*args)
+
+
+def _run_download(monkeypatch, errors: list[str], versions: tuple):
+    """Run one YouTube job whose downloader fails with ``errors`` first."""
+    hass = _FakeHass()
+    entry = types.SimpleNamespace(entry_id="e1", data={}, options={})
+    mgr = manager.DownloadManager(hass, entry)
+    attempts: list[str] = []
+    upgrades: list[str] = []
+
+    async def fake_download(hass, url, destination, **kwargs):
+        attempts.append(url)
+        if errors:
+            raise youtube.YouTubeError(errors.pop(0))
+        return youtube.YouTubeResult(
+            path=f"{destination}/x.mp3", title="x", duration=1.0,
+            bytes_downloaded=10, final_url=url,
+        )
+
+    def fake_upgrade(config_dir: str | None = None) -> tuple:
+        upgrades.append(config_dir)
+        return versions
+
+    monkeypatch.setattr(manager, "async_download_youtube", fake_download)
+    monkeypatch.setattr(manager, "upgrade", fake_upgrade)
+
+    job = manager.DownloadJob(
+        id="j", url="https://youtu.be/abc", kind=const.KIND_YOUTUBE,
+        title="t", folder="/media",
+    )
+    mgr._jobs[job.id] = job
+    asyncio.run(mgr._async_run(job, "t", "/media"))
+    return job, attempts, upgrades, mgr
+
+
+def test_stale_error_upgrades_and_retries_once(monkeypatch):
+    job, attempts, upgrades, mgr = _run_download(
+        monkeypatch, ["HTTP Error 403: Forbidden"], ("1", "2")
+    )
+    assert (len(attempts), len(upgrades)) == (2, 1)
+    assert job.state == const.STATE_COMPLETED
+    assert mgr.ytdlp_version == "2"
+
+
+def test_no_retry_when_upgrade_changes_nothing(monkeypatch):
+    job, attempts, upgrades, _ = _run_download(
+        monkeypatch, ["Sign in to confirm you're not a bot"], ("1", "1")
+    )
+    assert (len(attempts), len(upgrades)) == (1, 1)
+    assert job.state == const.STATE_FAILED
+    assert job.error == "Sign in to confirm you're not a bot"
+
+
+def test_other_errors_do_not_trigger_an_upgrade(monkeypatch):
+    job, attempts, upgrades, _ = _run_download(
+        monkeypatch, ["Download exceeded the 500 MB limit"], ("1", "2")
+    )
+    assert (len(attempts), len(upgrades)) == (1, 0)
+    assert job.state == const.STATE_FAILED
+
+
+def test_second_failure_surfaces_the_new_error(monkeypatch):
+    job, attempts, _, _ = _run_download(
+        monkeypatch, ["HTTP Error 403: Forbidden", "still broken"], ("1", "2")
+    )
+    assert len(attempts) == 2
+    assert job.error == "still broken"
