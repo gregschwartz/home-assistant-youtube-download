@@ -67,8 +67,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     manager = DownloadManager(hass, entry)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
 
-    # Upgrade before anything imports yt-dlp, so a stale copy is never loaded.
-    await manager.async_upgrade_ytdlp()
+    # Upgrade in the background: a pip run on every boot would block setup
+    # (and trip HA's slow-setup warning) for the length of a network timeout
+    # when offline. Downloads wait on the manager's lock, so a stale copy is
+    # still never loaded.
+    entry.async_create_background_task(
+        hass, manager.async_upgrade_ytdlp(), "youtube_download yt-dlp upgrade"
+    )
 
     async def _async_daily_upgrade(_now: datetime) -> None:
         await manager.async_upgrade_ytdlp()

@@ -12,6 +12,7 @@ import importlib.util
 import os
 import sys
 import types
+import uuid
 from pathlib import Path
 
 import pytest
@@ -501,6 +502,7 @@ def _run_download(monkeypatch, errors: list[str], versions: tuple):
     hass = _FakeHass()
     entry = types.SimpleNamespace(entry_id="e1", data={}, options={})
     mgr = manager.DownloadManager(hass, entry)
+    mgr.ytdlp_version = versions[0]  # the version the first attempt runs on
     attempts: list[str] = []
     upgrades: list[str] = []
 
@@ -561,3 +563,82 @@ def test_second_failure_surfaces_the_new_error(monkeypatch):
     )
     assert len(attempts) == 2
     assert job.error == "still broken"
+
+
+def _make_job(mgr) -> "manager.DownloadJob":
+    job = manager.DownloadJob(
+        id=uuid.uuid4().hex, url="https://youtu.be/abc", kind=const.KIND_YOUTUBE,
+        title="t", folder="/media",
+    )
+    mgr._jobs[job.id] = job
+    return job
+
+
+def test_concurrent_stale_failures_both_retry_after_one_upgrade(monkeypatch):
+    """Two 403s at once: the second job must not see "no change" and give up."""
+    hass = _FakeHass()
+    mgr = manager.DownloadManager(hass, types.SimpleNamespace(entry_id="e1", data={}, options={}))
+    jobs = [_make_job(mgr), _make_job(mgr)]
+    failed: set[str] = set()
+    installed = ["1"]
+
+    async def fake_download(hass, url, destination, **kwargs):
+        await asyncio.sleep(0)  # let both jobs fail before either upgrades
+        if (job_id := kwargs["stem"]) not in failed:
+            failed.add(job_id)
+            raise youtube.YouTubeError("HTTP Error 403: Forbidden")
+        return youtube.YouTubeResult(
+            path="/media/x.mp3", title="x", duration=1.0, bytes_downloaded=1, final_url=url,
+        )
+
+    def fake_upgrade(config_dir=None):
+        old = installed[0]
+        installed[0] = "2"
+        return old, "2"
+
+    monkeypatch.setattr(manager, "async_download_youtube", fake_download)
+    monkeypatch.setattr(manager, "upgrade", fake_upgrade)
+
+    async def run():
+        await asyncio.gather(*(mgr._async_run(j, j.id, "/media") for j in jobs))
+
+    asyncio.run(run())
+    assert [j.state for j in jobs] == [const.STATE_COMPLETED] * 2
+
+
+def test_download_waits_for_an_upgrade_in_progress(monkeypatch):
+    """A download started during an upgrade must not import yt-dlp mid-install."""
+    hass = _FakeHass()
+    release = asyncio.Event()
+    order: list[str] = []
+
+    async def slow_executor(func, *args):
+        if func is manager.upgrade:
+            order.append("upgrade start")
+            await release.wait()
+            order.append("upgrade done")
+        return func(*args)
+
+    hass.async_add_executor_job = slow_executor
+    mgr = manager.DownloadManager(hass, types.SimpleNamespace(entry_id="e1", data={}, options={}))
+    job = _make_job(mgr)
+
+    async def fake_download(hass, url, destination, **kwargs):
+        order.append("download")
+        return youtube.YouTubeResult(
+            path="/media/x.mp3", title="x", duration=1.0, bytes_downloaded=1, final_url=url,
+        )
+
+    monkeypatch.setattr(manager, "async_download_youtube", fake_download)
+    monkeypatch.setattr(manager, "upgrade", lambda d=None: ("1", "2"))
+
+    async def run():
+        upgrade = asyncio.ensure_future(mgr.async_upgrade_ytdlp())
+        await asyncio.sleep(0)
+        download = asyncio.ensure_future(mgr._async_run(job, "t", "/media"))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(upgrade, download)
+
+    asyncio.run(run())
+    assert order == ["upgrade start", "upgrade done", "download"]

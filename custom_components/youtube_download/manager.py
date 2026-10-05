@@ -121,6 +121,10 @@ class DownloadManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._listeners: list[Callable[[DownloadJob | None], None]] = []
         self.ytdlp_version: str | None = installed_version()
+        # Serialises upgrades with each other and with download starts, so two
+        # uv processes never race on one install and no download imports a
+        # half-written yt-dlp.
+        self._ytdlp_lock = asyncio.Lock()
 
     # -- configuration -----------------------------------------------------
 
@@ -251,10 +255,11 @@ class DownloadManager:
 
     async def async_upgrade_ytdlp(self) -> tuple[str | None, str | None]:
         """Upgrade yt-dlp off the event loop; returns (previous, current)."""
-        old, new = await self.hass.async_add_executor_job(
-            upgrade, self.hass.config.config_dir
-        )
-        self.ytdlp_version = new
+        async with self._ytdlp_lock:
+            old, new = await self.hass.async_add_executor_job(
+                upgrade, self.hass.config.config_dir
+            )
+            self.ytdlp_version = new
         if new != old:
             self._notify(None)
         return old, new
@@ -381,9 +386,12 @@ class DownloadManager:
         self, job: DownloadJob, stem: str, destination: str
     ) -> tuple[str, int]:
         """Download the job's URL once; returns (path, size)."""
-        download = (
-            async_download_youtube if job.kind == KIND_YOUTUBE else async_download_image
-        )
+        if job.kind == KIND_YOUTUBE:
+            async with self._ytdlp_lock:  # wait out an in-flight upgrade
+                pass
+            download = async_download_youtube
+        else:
+            download = async_download_image
         result = await download(
             self.hass,
             job.url,
@@ -399,14 +407,18 @@ class DownloadManager:
         """Run the download and record how it went."""
         try:
             try:
+                used = self.ytdlp_version
                 path, size = await self._async_fetch(job, stem, destination)
             except YouTubeError as err:
                 # A 403 / "sign in" usually means YouTube changed under a
                 # stale yt-dlp; a fresh one fixes it more often than not.
                 if job.cancel_event.is_set() or not is_stale_error(str(err)):
                     raise
-                old, new = await self.async_upgrade_ytdlp()
-                if new == old:
+                _, new = await self.async_upgrade_ytdlp()
+                # Compare with the version this attempt ran on, not the one
+                # before *this* upgrade call: another job may have upgraded
+                # while we were downloading, and that still deserves a retry.
+                if new == used:
                     raise
                 job.message = f"Retrying with yt-dlp {new}"
                 self._notify(job)
