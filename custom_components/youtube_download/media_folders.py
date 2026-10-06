@@ -69,6 +69,25 @@ def preferred_media_folder(
     )
 
 
+def suggest_folder_for_title(
+    folders: list[dict[str, str]], title: str, preferred: str
+) -> str | None:
+    """Pick the meditation folder a title implies, else the preferred one.
+
+    Sleep wins over morning: "morning to night" tracks are wind-downs.
+    """
+    lowered = (title or "").lower()
+    for words, folder in (
+        (("sleep", "night"), "meditations/sleep"),
+        (("morning",), "meditations/morning"),
+    ):
+        if any(word in lowered for word in words):
+            picked = preferred_media_folder(folders, folder)
+            if picked:
+                return picked
+    return preferred_media_folder(folders, preferred)
+
+
 def resolve_media_folder(hass: HomeAssistant, folder: str) -> str:
     """Return the absolute path for ``folder``, or raise :class:`MediaFolderError`.
 

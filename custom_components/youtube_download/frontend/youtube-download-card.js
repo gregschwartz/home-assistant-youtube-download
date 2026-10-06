@@ -364,6 +364,22 @@ class YouTubeDownloadCard extends HTMLElement {
     }
   }
 
+  async _retry(jobId) {
+    const job = this._jobs.find((item) => item.id === jobId);
+    if (!job) return;
+    try {
+      await this._call({
+        type: `${DOMAIN}/download`,
+        url: job.url,
+        folder: job.folder,
+        filename: job.title,
+      });
+    } catch (err) {
+      this._error = err.message || "Could not retry";
+      this._render();
+    }
+  }
+
   async _clearFinished() {
     try {
       await this._call({ type: `${DOMAIN}/clear_finished` });
@@ -514,17 +530,13 @@ class YouTubeDownloadCard extends HTMLElement {
     // The auto-selected folder is lifted to the top so it is visible without
     // scrolling a long list. Only the automatic pick moves - reordering under
     // the cursor while you are clicking would be maddening.
-    if (!this._pinnedFolder) return this._folders;
-
-    const pinned = this._folders.filter(
-      (folder) => folder.path === this._pinnedFolder
-    );
-    if (!pinned.length) return this._folders;
-
-    return [
-      ...pinned,
-      ...this._folders.filter((folder) => folder.path !== this._pinnedFolder),
-    ];
+    // Videos are almost always meditations, so those folders follow it.
+    const rank = (folder) => {
+      if (folder.path === this._pinnedFolder) return 0;
+      const isVideo = this._preview && this._preview.kind === "youtube";
+      return isVideo && /meditation/i.test(folder.label) ? 1 : 2;
+    };
+    return [...this._folders].sort((a, b) => rank(a) - rank(b));
   }
 
   _foldersHtml() {
@@ -577,6 +589,10 @@ class YouTubeDownloadCard extends HTMLElement {
                   ? `<button class="secondary cancel" data-job="${escapeHtml(
                       job.id
                     )}">Cancel</button>`
+                  : job.state === "failed"
+                  ? `<button class="secondary retry" data-job="${escapeHtml(
+                      job.id
+                    )}">Retry</button>`
                   : ""
               }
             </div>
@@ -686,6 +702,11 @@ class YouTubeDownloadCard extends HTMLElement {
   }
 
   _wireUpJobs() {
+    this._card.querySelectorAll(".retry").forEach((button) => {
+      button.addEventListener("click", () =>
+        this._retry(button.getAttribute("data-job"))
+      );
+    });
     this._card.querySelectorAll(".cancel").forEach((button) => {
       button.addEventListener("click", () =>
         this._cancel(button.getAttribute("data-job"))

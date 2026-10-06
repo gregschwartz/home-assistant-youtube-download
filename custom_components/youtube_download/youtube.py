@@ -62,13 +62,31 @@ def is_youtube_url(url: str) -> bool:
 
 
 def normalize_youtube_ref(ref: str) -> str:
-    """Turn a bare video ID (always 11 chars) or playlist ID into a full URL."""
+    """Reduce a YouTube link or bare ID to its canonical URL.
+
+    Share links carry tracking (``si=``), timestamps and playlist context; only
+    the video ID matters, and keeping the rest makes yt-dlp fetch playlists.
+    """
     ref = (ref or "").strip()
-    if not re.fullmatch(r"[\w-]+", ref):
+    if re.fullmatch(r"[\w-]+", ref):
+        if len(ref) == 11:
+            return f"https://www.youtube.com/watch?v={ref}"
+        return f"https://www.youtube.com/playlist?list={ref}"
+    if not is_youtube_url(ref):
         return ref
-    if len(ref) == 11:
-        return f"https://www.youtube.com/watch?v={ref}"
-    return f"https://www.youtube.com/playlist?list={ref}"
+    parsed = urlparse(ref)
+    query = parse_qs(parsed.query)
+    video = (query.get("v") or [None])[0]
+    if not video:
+        match = re.match(r"/(?:shorts/|live/|embed/|v/)?([\w-]{11})(?:/|$)", parsed.path)
+        if match:
+            video = match.group(1)
+    if video:
+        return f"https://www.youtube.com/watch?v={video}"
+    playlist = (query.get("list") or [None])[0]
+    if playlist:
+        return f"https://www.youtube.com/playlist?list={playlist}"
+    return ref
 
 
 def playlist_id(url: str) -> str | None:

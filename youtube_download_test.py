@@ -383,7 +383,7 @@ def test_youtube_hosts_are_lowercase():
     [
         ("u7deClndzQw", "https://www.youtube.com/watch?v=u7deClndzQw"),
         ("PL7Yvr29YiYrDv-9kxFsIoEavmPb8b8nif", "https://www.youtube.com/playlist?list=PL7Yvr29YiYrDv-9kxFsIoEavmPb8b8nif"),
-        ("  https://youtu.be/u7deClndzQw  ", "https://youtu.be/u7deClndzQw"),
+        ("  https://youtu.be/u7deClndzQw  ", "https://www.youtube.com/watch?v=u7deClndzQw"),
         ("https://example.com/a.jpg", "https://example.com/a.jpg"),
     ],
 )
@@ -540,20 +540,29 @@ def test_stale_error_upgrades_and_retries_once(monkeypatch):
     assert mgr.ytdlp_version == "2"
 
 
-def test_no_retry_when_upgrade_changes_nothing(monkeypatch):
+def _no_sleep(monkeypatch):
+    async def fake_sleep(delay):
+        pass
+
+    monkeypatch.setattr(manager.asyncio, "sleep", fake_sleep)
+
+
+def test_unchanged_upgrade_falls_back_to_the_delayed_retry(monkeypatch):
+    _no_sleep(monkeypatch)
     job, attempts, upgrades, _ = _run_download(
-        monkeypatch, ["Sign in to confirm you're not a bot"], ("1", "1")
+        monkeypatch, ["Sign in to confirm you're not a bot"] * 2, ("1", "1")
     )
-    assert (len(attempts), len(upgrades)) == (1, 1)
+    assert (len(attempts), len(upgrades)) == (2, 1)
     assert job.state == const.STATE_FAILED
     assert job.error == "Sign in to confirm you're not a bot"
 
 
 def test_other_errors_do_not_trigger_an_upgrade(monkeypatch):
+    _no_sleep(monkeypatch)
     job, attempts, upgrades, _ = _run_download(
-        monkeypatch, ["Download exceeded the 500 MB limit"], ("1", "2")
+        monkeypatch, ["Download exceeded the 500 MB limit"] * 2, ("1", "2")
     )
-    assert (len(attempts), len(upgrades)) == (1, 0)
+    assert (len(attempts), len(upgrades)) == (2, 0)
     assert job.state == const.STATE_FAILED
 
 
@@ -719,3 +728,59 @@ def test_first_upgrade_notifies_even_when_pip_changed_nothing(monkeypatch):
     assert asyncio.run(mgr.async_upgrade_ytdlp()) == ("2026.8.19", "2026.8.19")
     assert mgr.ytdlp_version == "2026.8.19"
     assert notified == [None]
+
+
+# -- title-based folder, clean URLs, auto-retry ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("10 Minute Morning Meditation", "meditations/morning"),
+        ("Deep Sleep Body Scan", "meditations/sleep"),
+        ("Good Night wind-down", "meditations/sleep"),
+        ("Morning to night calm", "meditations/sleep"),
+        ("Breathing basics", "meditations/morning"),  # preferred fallback
+    ],
+)
+def test_suggest_folder_for_title(tmp_path, title, expected):
+    _tree(tmp_path)
+    folders = media_folders._scan({"local": str(tmp_path)})
+    picked = media_folders.suggest_folder_for_title(folders, title, "meditations/morning")
+    assert picked == str(tmp_path / expected)
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://youtu.be/JdachuM5sYI?si=NEy2sR8h29sTWmiY", "https://www.youtube.com/watch?v=JdachuM5sYI"),
+        ("https://www.youtube.com/watch?v=JdachuM5sYI&list=PLx&t=42s&si=abc", "https://www.youtube.com/watch?v=JdachuM5sYI"),
+        ("https://m.youtube.com/shorts/JdachuM5sYI?feature=share", "https://www.youtube.com/watch?v=JdachuM5sYI"),
+        ("https://www.youtube.com/live/JdachuM5sYI?si=x", "https://www.youtube.com/watch?v=JdachuM5sYI"),
+        ("JdachuM5sYI", "https://www.youtube.com/watch?v=JdachuM5sYI"),
+        ("https://www.youtube.com/playlist?list=PLabc&si=x", "https://www.youtube.com/playlist?list=PLabc"),
+        ("https://example.com/a.jpg?x=1", "https://example.com/a.jpg?x=1"),
+    ],
+)
+def test_clean_youtube_url(url, expected):
+    assert youtube.normalize_youtube_ref(url) == expected
+
+
+def test_any_failure_waits_then_retries_once(monkeypatch):
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(manager.asyncio, "sleep", fake_sleep)
+    job, attempts, upgrades, _ = _run_download(monkeypatch, ["network blip"], ("1", "2"))
+    assert (len(attempts), sleeps, job.state) == (2, [5], const.STATE_COMPLETED)
+
+
+def test_auto_retry_happens_only_once(monkeypatch):
+    async def fake_sleep(delay):
+        pass
+
+    monkeypatch.setattr(manager.asyncio, "sleep", fake_sleep)
+    job, attempts, _, _ = _run_download(monkeypatch, ["a", "b", "c"], ("1", "2"))
+    assert (len(attempts), job.state, job.error) == (2, const.STATE_FAILED, "b")

@@ -44,8 +44,8 @@ from .images import (
 from .media_folders import (
     MediaFolderError,
     async_list_media_folders,
-    preferred_media_folder,
     resolve_media_folder,
+    suggest_folder_for_title,
 )
 from .updater import is_stale_error, upgrade
 from .youtube import (
@@ -108,6 +108,11 @@ class DownloadJob:
     def is_finished(self) -> bool:
         """Return True once the job will not change again."""
         return self.state in FINISHED_STATES
+
+
+# Most failures are transient (network, throttling); one delayed retry
+# rescues them without hammering YouTube.
+RETRY_DELAY = 5
 
 
 class DownloadManager:
@@ -229,8 +234,8 @@ class DownloadManager:
                 "image": None,
                 "extension": ".mp3",
                 "suggested_filename": sanitize_filename(preview.title),
-                "suggested_folder": preferred_media_folder(
-                    folders, self.options[CONF_PREFERRED_FOLDER]
+                "suggested_folder": suggest_folder_for_title(
+                    folders, preview.title, self.options[CONF_PREFERRED_FOLDER]
                 ),
             }
 
@@ -290,7 +295,7 @@ class DownloadManager:
         self, url: str, *, folder: str, filename: str | None = None
     ) -> DownloadJob:
         """Validate the request, create a job, and run it in the background."""
-        url = (url or "").strip()
+        url = normalize_youtube_ref(url)
         kind = self.classify(url)
 
         try:
@@ -440,19 +445,24 @@ class DownloadManager:
             try:
                 used = self.ytdlp_version
                 path, size = await self._async_fetch(job, stem, destination)
-            except YouTubeError as err:
+            except Exception as err:  # noqa: BLE001 - every failure gets one retry
+                if job.cancel_event.is_set():
+                    raise
+                new = None
                 # A 403 / "sign in" usually means YouTube changed under a
                 # stale yt-dlp; a fresh one fixes it more often than not.
-                if job.cancel_event.is_set() or not is_stale_error(str(err)):
-                    raise
-                _, new = await self.async_upgrade_ytdlp()
+                if isinstance(err, YouTubeError) and is_stale_error(str(err)):
+                    _, new = await self.async_upgrade_ytdlp()
                 # Compare with the version this attempt ran on, not the one
                 # before *this* upgrade call: another job may have upgraded
                 # while we were downloading, and that still deserves a retry.
-                if new == used:
-                    raise
-                job.message = f"Retrying with yt-dlp {new}"
+                if new and new != used:
+                    job.message = f"Retrying with yt-dlp {new}"
+                else:
+                    job.message = f"Failed ({err}); retrying in {RETRY_DELAY}s"
                 self._notify(job)
+                if not (new and new != used):
+                    await asyncio.sleep(RETRY_DELAY)
                 path, size = await self._async_fetch(job, stem, destination)
         except asyncio.CancelledError:
             self._finish(job, STATE_CANCELLED, "Cancelled")
