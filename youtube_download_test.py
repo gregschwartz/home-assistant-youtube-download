@@ -784,3 +784,21 @@ def test_auto_retry_happens_only_once(monkeypatch):
     monkeypatch.setattr(manager.asyncio, "sleep", fake_sleep)
     job, attempts, _, _ = _run_download(monkeypatch, ["a", "b", "c"], ("1", "2"))
     assert (len(attempts), job.state, job.error) == (2, const.STATE_FAILED, "b")
+
+
+def test_upgrade_unwraps_yt_dlp_urllib3_patch(monkeypatch):
+    """Re-importing yt-dlp would wrap its own urllib3 wrapper, breaking .sub()."""
+    import re
+    import urllib3.util.url as url
+
+    class Urllib3PercentREOverride:
+        def __init__(self, r):
+            self.re = r
+
+    original = re.compile("%[a-f0-9]{2}")
+    monkeypatch.setattr(url, "_PERCENT_RE", Urllib3PercentREOverride(original))
+    _fake_install(monkeypatch, ["1", "2"])
+
+    updater.upgrade()
+
+    assert url._PERCENT_RE is original

@@ -55,8 +55,23 @@ def upgrade(config_dir: str | None = None) -> tuple[str | None, str | None]:
     importlib.invalidate_caches()
     for name in [n for n in sys.modules if n == "yt_dlp" or n.startswith("yt_dlp.")]:
         del sys.modules[name]
+    _unwrap_urllib3_patch()
 
     new = installed_version()
     if new != old:
         _LOGGER.info("yt-dlp upgraded from %s to %s", old, new)
     return old, new
+
+
+def _unwrap_urllib3_patch() -> None:
+    """Restore urllib3's regex that yt-dlp wraps at import time.
+
+    Re-importing yt-dlp would wrap its own wrapper, whose passthrough can't
+    reach ``.sub()``; that breaks every requests call in HA (google-auth etc.).
+    """
+    try:
+        import urllib3.util.url as url
+    except ImportError:
+        return
+    while type(url._PERCENT_RE).__name__ == "Urllib3PercentREOverride":
+        url._PERCENT_RE = url._PERCENT_RE.re
